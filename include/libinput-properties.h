@@ -199,4 +199,10 @@
 /* Tablet tool area ratio: CARD32, 2 values, w and h */
 #define LIBINPUT_PROP_TABLET_TOOL_AREA_RATIO "libinput Tablet Tool Area Ratio"
 
+/* Three finger drag: BOOL, 1 value */
+#define LIBINPUT_PROP_THREE_FINGER_DRAG "libinput Three Finger Drag Enabled"
+
+/* Three finger drag: BOOL, 1 value, read-only */
+#define LIBINPUT_PROP_THREE_FINGER_DRAG_DEFAULT "libinput Three Finger Drag Enabled Default"
+
 #endif /* _LIBINPUT_PROPERTIES_H_ */

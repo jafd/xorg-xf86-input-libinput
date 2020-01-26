@@ -167,6 +167,7 @@ struct xf86libinput {
 		unsigned char btnmap[MAX_BUTTONS + 1];
 
 		BOOL horiz_scrolling_enabled;
+		BOOL three_finger_drag;
 
 		float rotation_angle;
 		struct bezier_control_point pressurecurve[4];
@@ -2676,6 +2677,31 @@ xf86libinput_parse_natscroll_option(InputInfoPtr pInfo,
 	return natural_scroll;
 }
 
+static inline BOOL
+xf86libinput_parse_three_finger_drag_option(InputInfoPtr pInfo,
+				    struct libinput_device *device)
+{
+	BOOL three_finger_drag;
+
+	if (!libinput_device_config_has_three_finger_drag(device))
+		return FALSE;
+
+	three_finger_drag = xf86SetBoolOption(pInfo->options,
+					   "ThreeFingerDrag",
+					   libinput_device_config_get_three_finger_drag_enabled(device));
+	if (libinput_device_config_set_three_finger_drag_enabled(device,
+								     three_finger_drag) !=
+	    LIBINPUT_CONFIG_STATUS_SUCCESS) {
+		xf86IDrvMsg(pInfo, X_ERROR,
+			    "Failed to set ThreeFingerDrag to %d\n",
+			    three_finger_drag);
+
+		three_finger_drag = libinput_device_config_get_three_finger_drag_enabled(device);
+	}
+
+	return three_finger_drag;
+}
+
 static inline enum libinput_config_send_events_mode
 xf86libinput_parse_sendevents_option(InputInfoPtr pInfo,
 				     struct libinput_device *device)
@@ -3153,6 +3179,7 @@ xf86libinput_parse_options(InputInfoPtr pInfo,
 	options->middle_emulation = xf86libinput_parse_middleemulation_option(pInfo, device);
 	options->disable_while_typing = xf86libinput_parse_disablewhiletyping_option(pInfo, device);
 	options->rotation_angle = xf86libinput_parse_rotation_angle_option(pInfo, device);
+	options->three_finger_drag = xf86libinput_parse_three_finger_drag_option(pInfo, device);
 	xf86libinput_parse_calibration_option(pInfo, device, driver_data->options.matrix);
 
 	/* non-libinput options */
@@ -3629,6 +3656,8 @@ static Atom prop_mode_groups_rings;
 static Atom prop_mode_groups_strips;
 static Atom prop_rotation_angle;
 static Atom prop_rotation_angle_default;
+static Atom prop_three_finger_drag;
+static Atom prop_three_finger_drag_default;
 
 /* driver properties */
 static Atom prop_draglock;
@@ -4017,6 +4046,38 @@ LibinputSetPropertyNaturalScroll(DeviceIntPtr dev,
 			return BadMatch;
 	} else {
 		driver_data->options.natural_scrolling = *data;
+	}
+
+	return Success;
+}
+
+static inline int
+LibinputSetPropertyThreeFingerDrag(DeviceIntPtr dev,
+                                   Atom atom,
+                                   XIPropertyValuePtr val,
+                                   BOOL checkonly)
+{
+	InputInfoPtr pInfo = dev->public.devicePrivate;
+	struct xf86libinput *driver_data = pInfo->private;
+	struct libinput_device *device = driver_data->shared_device->device;
+	BOOL* data;
+
+	if (val->format != 8 || val->size != 1 || val->type != XA_INTEGER)
+		return BadMatch;
+
+	data = (BOOL*)val->data;
+
+	if (checkonly) {
+		if (*data != 0 && *data != 1)
+			return BadValue;
+
+		if (!xf86libinput_check_device (dev, atom))
+			return BadMatch;
+
+		if (libinput_device_config_has_three_finger_drag(device) == 0)
+			return BadMatch;
+	} else {
+		driver_data->options.three_finger_drag = *data;
 	}
 
 	return Success;
@@ -4585,6 +4646,8 @@ LibinputSetProperty(DeviceIntPtr dev, Atom atom, XIPropertyValuePtr val,
 		rc = LibinputSetPropertyAccelProfile(dev, atom, val, checkonly);
 	else if (atom == prop_natural_scroll)
 		rc = LibinputSetPropertyNaturalScroll(dev, atom, val, checkonly);
+	else if (atom == prop_three_finger_drag)
+		rc = LibinputSetPropertyThreeFingerDrag(dev, atom, val, checkonly);
 	else if (atom == prop_sendevents_enabled)
 		rc = LibinputSetPropertySendEvents(dev, atom, val, checkonly);
 	else if (atom == prop_left_handed)
@@ -4644,6 +4707,7 @@ LibinputSetProperty(DeviceIntPtr dev, Atom atom, XIPropertyValuePtr val,
 		 atom == prop_mode_groups_buttons ||
 		 atom == prop_mode_groups_rings ||
 		 atom == prop_mode_groups_strips ||
+		 atom == prop_three_finger_drag_default ||
 		 atom == prop_rotation_angle_default)
 		return BadAccess; /* read-only */
 	else
@@ -4971,6 +5035,32 @@ LibinputInitNaturalScrollProperty(DeviceIntPtr dev,
 							   1, &natural_scroll);
 }
 
+static void
+LibinputInitThreeFingerDragProperty(DeviceIntPtr dev,
+				  struct xf86libinput *driver_data,
+				  struct libinput_device *device)
+{
+	BOOL three_finger_drag = driver_data->options.three_finger_drag;
+
+	if (!subdevice_has_capabilities(dev, CAP_POINTER))
+		return;
+
+	if (!libinput_device_config_has_three_finger_drag(device))
+		return;
+
+	prop_three_finger_drag = LibinputMakeProperty(dev,
+						   LIBINPUT_PROP_THREE_FINGER_DRAG,
+						   XA_INTEGER, 8,
+						   1, &three_finger_drag);
+	if (!prop_three_finger_drag)
+		return;
+
+	three_finger_drag = libinput_device_config_get_default_three_finger_drag_enabled(device);
+	prop_three_finger_drag_default = LibinputMakeProperty(dev,
+							   LIBINPUT_PROP_THREE_FINGER_DRAG_DEFAULT,
+							   XA_INTEGER, 8,
+							   1, &three_finger_drag);
+}
 static void
 LibinputInitSendEventsProperty(DeviceIntPtr dev,
 			       struct xf86libinput *driver_data,
@@ -5564,6 +5654,7 @@ LibinputInitProperty(DeviceIntPtr dev)
 	LibinputInitTapDragLockProperty(dev, driver_data, device);
 	LibinputInitTapButtonmapProperty(dev, driver_data, device);
 	LibinputInitNaturalScrollProperty(dev, driver_data, device);
+	LibinputInitThreeFingerDragProperty(dev, driver_data, device);
 	LibinputInitDisableWhileTypingProperty(dev, driver_data, device);
 	LibinputInitScrollMethodsProperty(dev, driver_data, device);
 	LibinputInitClickMethodsProperty(dev, driver_data, device);
